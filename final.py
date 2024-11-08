@@ -17,11 +17,15 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout,
 from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtGui import QColor, QPainter
 from firebase_admin import credentials, db
-import requests
+import requests, json
 from datetime import datetime
 
-
+api_key = "fdd5d8aa96a819517bf6c12ef7183ee1"
 class Ui_MainWindow(object):
+    def __init__(self):
+        self.temperatures = []
+        self.humidities = []
+        self.time_stamps = []
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1127, 776)
@@ -131,14 +135,15 @@ class Ui_MainWindow(object):
         self.AIR_SLIDER.valueChanged.connect(self.updateAirLabel)
         self.AIR_SLIDER.setObjectName("AIR_SLIDER")
         self.CHART_MAIN = QtWidgets.QWidget(self.centralwidget)
-        self.CHART_MAIN.setGeometry(QtCore.QRect(750, 100, 361, 151))
+        self.CHART_MAIN.setGeometry(QtCore.QRect(730, 100, 381, 221))
         self.CHART_MAIN.setObjectName("CHART_MAIN")
+        self.chart_layout = QtWidgets.QVBoxLayout(self.CHART_MAIN)
+        self.CHART_MAIN.setLayout(self.chart_layout)
         self.SENSOR_1 = QtWidgets.QWidget(self.centralwidget)
-        self.SENSOR_1.setGeometry(QtCore.QRect(750, 260, 361, 91))
-        self.SENSOR_1.setObjectName("SENSOR_1")
-        self.SENSOR_2 = QtWidgets.QWidget(self.centralwidget)
-        self.SENSOR_2.setGeometry(QtCore.QRect(750, 360, 361, 91))
-        self.SENSOR_2.setObjectName("SENSOR_2")
+        self.SENSOR_1.setGeometry(QtCore.QRect(730, 330, 381, 131))
+        self.SENSOR_1.setObjectName("SENSOR_1") 
+        self.SENSOR_1_layout = QtWidgets.QVBoxLayout(self.SENSOR_1)
+        self.SENSOR_1.setLayout(self.SENSOR_1_layout)
         self.comboBox = QtWidgets.QComboBox(self.centralwidget)
         self.comboBox.setGeometry(QtCore.QRect(60, 130, 121, 22))
         self.comboBox.setObjectName("comboBox")
@@ -164,10 +169,14 @@ class Ui_MainWindow(object):
         self.statusbar = QtWidgets.QStatusBar(MainWindow)
         self.statusbar.setObjectName("statusbar")
         MainWindow.setStatusBar(self.statusbar)
-
         self.retranslateUi(MainWindow)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
-
+        self.plotElectricBill()
+        self.fig, self.ax = plt.subplots(figsize=(6, 4))
+        self.canvas = FigureCanvas(self.fig)
+        self.SENSOR_1_layout.addWidget(self.canvas)
+        self.canvas.draw()
+        self.fetch_weather_data()
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
@@ -183,6 +192,63 @@ class Ui_MainWindow(object):
         self.comboBox.setItemText(0, _translate("MainWindow", "MODE 1"))
         self.comboBox.setItemText(1, _translate("MainWindow", "MODE 2"))
         self.comboBox.setItemText(2, _translate("MainWindow", "MODE 3"))
+    def plotElectricBill(self):
+        devices = ['Lamp', 'Air Conditioner', 'PC']
+        power_consumption = [60, 2000, 150] # in watt
+        usage_hours = [100, 30, 50] # cacualte in hours per m
+        cost_per_kwh = 0.13 # $
+        energy_consumed = [(power * hours)/ 1000 for power, hours in zip(power_consumption, usage_hours)]
+        bills = [energy * cost_per_kwh for energy in energy_consumed]
+    # Create a bar chart
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.bar(devices, bills, color=['yellow', 'green', 'blue'])
+    # Clear previous chart if exist
+        for i in reversed(range(self.CHART_MAIN.layout().count())): 
+            widget = self.CHART_MAIN.layout().itemAt(i).widget()
+            if widget is not None:
+                widget.deleteLater()
+    # Draw
+        canvas = FigureCanvas(fig)
+        self.chart_layout.addWidget(canvas)
+        canvas.draw()
+    def fetch_weather_data(self):
+        city_name = "Ho Chi Minh"
+        base_url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={api_key}&units=metric"
+        
+        try:
+            response = requests.get(base_url)
+            if response.status_code == 200:
+                data = response.json()
+                nhiet_do = data["main"]["temp"]
+                do_am = data["main"]["humidity"]
+
+                # Store the fetched data
+                self.temperatures.append(nhiet_do)
+                self.humidities.append(do_am)
+                self.time_stamps.append(datetime.now().strftime("%H:%M:%S"))  # Store current time as a string
+
+                # Update the sensor values and the graph
+                self.update_sensor_values(nhiet_do, do_am)
+                self.update_sensor_graph()
+            else:
+                print("Lỗi API hoặc không tìm thấy thành phố")
+        except requests.RequestException as e:
+            print(f"Lỗi kết nối API: {e}")
+
+    def update_sensor_graph(self):
+        # Clear the previous plot
+        self.ax.clear()
+
+        # Plot temperature and humidity
+        self.ax.plot(self.time_stamps, self.temperatures, color='red')
+        self.ax.plot(self.time_stamps, self.humidities, color='blue')
+        # Redraw the canvas
+        self.canvas.draw()
+
+    def update_sensor_values(self, temperature, humidity):
+        # Update sensor values in the UI as needed
+        # For example, you could have QLabel widgets to show current temperature and humidity
+        pass
     def turnLampOn(self):
         self.LAMP_LABEL.setStyleSheet("image: url(:/img/lamp_on.png);")
     def turnLampOff(self):
