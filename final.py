@@ -16,16 +16,10 @@ from numpy import random
 from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QSpacerItem, QSizePolicy
 from PyQt5.QtCore import Qt, QRect, QTimer
 from PyQt5.QtGui import QColor, QPainter
-from firebase_admin import credentials, db
 import requests, json
 from datetime import datetime
 
-api_key = "fdd5d8aa96a819517bf6c12ef7183ee1"
 class Ui_MainWindow(object):
-    def __init__(self):
-        self.temperatures = []
-        self.humidities = []
-        self.time_stamps = []
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1127, 776)
@@ -142,8 +136,9 @@ class Ui_MainWindow(object):
         self.SENSOR_1 = QtWidgets.QWidget(self.centralwidget)
         self.SENSOR_1.setGeometry(QtCore.QRect(730, 330, 381, 131))
         self.SENSOR_1.setObjectName("SENSOR_1") 
+        self.sensor_widget = self.sensor_widget(self.SENSOR_1)
         self.SENSOR_1_layout = QtWidgets.QVBoxLayout(self.SENSOR_1)
-        self.SENSOR_1.setLayout(self.SENSOR_1_layout)
+        self.SENSOR_1_layout.addWidget(self.sensor_widget)
         self.comboBox = QtWidgets.QComboBox(self.centralwidget)
         self.comboBox.setGeometry(QtCore.QRect(60, 130, 121, 22))
         self.comboBox.setObjectName("comboBox")
@@ -175,8 +170,109 @@ class Ui_MainWindow(object):
         self.fig, self.ax = plt.subplots(figsize=(6, 4))
         self.canvas = FigureCanvas(self.fig)
         self.SENSOR_1_layout.addWidget(self.canvas)
-        self.canvas.draw()
-        self.fetch_weather_data()
+    class sensor_widget(QtWidgets.QWidget):
+        def __init__(self, parent=None):
+            super(Ui_MainWindow.sensor_widget, self).__init__(parent)
+            self.figure = Figure()
+            self.canvas = FigureCanvas(self.figure)
+            self.ax = self.figure.add_subplot(111)
+
+            self.temperature_data = []
+            self.dewpoint_data = []
+            self.feelslike_data = []
+            self.time_data = []
+            self.time_counter = 0
+
+                # Layout
+            layout = QtWidgets.QVBoxLayout()
+            layout.addWidget(self.canvas)
+            self.setLayout(layout)
+
+            self.timer = QtCore.QTimer()
+            self.timer.timeout.connect(self.update_graph)
+            self.timer.setInterval(1000) 
+            self.timer.start()
+
+            self.restart_timer = QtCore.QTimer()
+            self.restart_timer.timeout.connect(self.restart_chart)
+            self.restart_timer.setInterval(60000) 
+            self.restart_timer.start()
+        def fetch_sensor_data(self):
+            try:
+                response = requests.get(
+                "http://api.openweathermap.org/data/2.5/weather?q=Ho%20Chi%20Minh&appid=559c2d91995849fa612070fecb8a7bc3&units=metric"
+            )
+                response.raise_for_status()
+                data = response.json()
+                temperature = data["main"]["temp"]
+                feelslike = data["main"]["feels_like"]                
+                humidity = data["main"]["humidity"]
+                dewpoint = temperature - ((100 - humidity) / 5) 
+                return temperature, dewpoint, feelslike
+            except requests.exceptions.RequestException as e:
+                print(f"Request error: {e}")
+                return None, None, None
+            except ValueError as e:
+                print(f"JSON decode error: {e}")
+                return None, None, None
+            except KeyError as e:
+                print(f"Missing key in response: {e}")
+                return None, None, None
+
+        def update_graph(self):
+            temperature, dewpoint, feelslike = self.fetch_sensor_data()
+            if temperature is not None:
+                self.time_data.append(self.time_counter)
+                self.temperature_data.append(temperature)
+                self.dewpoint_data.append(dewpoint)
+                self.feelslike_data.append(feelslike)
+                self.time_counter += 3
+                if len(self.time_data) > 20:
+                    self.time_data.pop(0)
+                    self.temperature_data.pop(0)
+                    self.dewpoint_data.pop(0)
+                    self.feelslike_data.pop(0)
+
+                self.ax.clear()
+                lines = {
+                    "Temparture": (self.time_data, self.temperature_data, "red"),
+                    "Humidity": (self.time_data, self.dewpoint_data, "green"),
+                    "Feels Like (°C)": (self.time_data, self.feelslike_data, "orange"),
+                }
+                for label, (x_data, y_data, color) in lines.items():
+                    self.ax.plot(x_data, y_data, label=label, color=color)
+                for y_data, color, label in zip(
+                    [self.temperature_data, self.dewpoint_data, self.feelslike_data],
+                    ["red", "green", "orange"],
+                    ["Temperature", "Dew Point", "Feels Like"],
+                ):
+                    if y_data:
+                        last_value = y_data[-1]
+                        self.ax.text(
+                            self.time_data[-1],
+                            last_value,
+                            f"{last_value:.1f}",
+                            color=color,
+                            ha="center",
+                            va="bottom",
+                        )          
+                self.canvas.draw()
+
+        def restart_chart(self):
+            print("Restarting chart...")
+            self.temperature_data.clear()
+            self.dewpoint_data.clear()
+            self.feelslike_data.clear()
+            self.time_data.clear()
+            self.time_counter = 0
+            self.ax.clear()
+            self.canvas.draw()
+
+        def stop_auto_update(self):
+            self.timer.stop()
+
+        def start_auto_update(self):
+            self.timer.start()
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
@@ -211,44 +307,6 @@ class Ui_MainWindow(object):
         canvas = FigureCanvas(fig)
         self.chart_layout.addWidget(canvas)
         canvas.draw()
-    def fetch_weather_data(self):
-        city_name = "Ho Chi Minh"
-        base_url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={api_key}&units=metric"
-        
-        try:
-            response = requests.get(base_url)
-            if response.status_code == 200:
-                data = response.json()
-                nhiet_do = data["main"]["temp"]
-                do_am = data["main"]["humidity"]
-
-                # Store the fetched data
-                self.temperatures.append(nhiet_do)
-                self.humidities.append(do_am)
-                self.time_stamps.append(datetime.now().strftime("%H:%M:%S"))  # Store current time as a string
-
-                # Update the sensor values and the graph
-                self.update_sensor_values(nhiet_do, do_am)
-                self.update_sensor_graph()
-            else:
-                print("Lỗi API hoặc không tìm thấy thành phố")
-        except requests.RequestException as e:
-            print(f"Lỗi kết nối API: {e}")
-
-    def update_sensor_graph(self):
-        # Clear the previous plot
-        self.ax.clear()
-
-        # Plot temperature and humidity
-        self.ax.plot(self.time_stamps, self.temperatures, color='red')
-        self.ax.plot(self.time_stamps, self.humidities, color='blue')
-        # Redraw the canvas
-        self.canvas.draw()
-
-    def update_sensor_values(self, temperature, humidity):
-        # Update sensor values in the UI as needed
-        # For example, you could have QLabel widgets to show current temperature and humidity
-        pass
     def turnLampOn(self):
         self.LAMP_LABEL.setStyleSheet("image: url(:/img/lamp_on.png);")
     def turnLampOff(self):
@@ -298,6 +356,7 @@ class Ui_MainWindow(object):
         self.PC_SWITCH.setIcon(QtGui.QIcon(":/img/switch_off.png"))
     def EXIT(self):
         QtWidgets.QApplication.quit()  # Exit the application
+
 import img_rc
 #########################################################################
 if __name__ == "__main__":
